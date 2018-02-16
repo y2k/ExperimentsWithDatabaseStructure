@@ -1,6 +1,6 @@
 package y2k.experimentswithdatabasestructure.eventsourcing
 
-import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -8,23 +8,22 @@ import com.fasterxml.jackson.databind.ObjectMapper.DefaultTyping
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import y2k.experimentswithdatabasestructure.common.asSequence
-import y2k.experimentswithdatabasestructure.common.queryList
-import y2k.experimentswithdatabasestructure.common.toList
+import y2k.experimentswithdatabasestructure.common.execute
+import y2k.experimentswithdatabasestructure.common.query
+import y2k.experimentswithdatabasestructure.common.transaction
 import java.util.*
 
 object Api {
 
-    @SuppressLint("Recycle")
     fun selectUsers(database: SQLiteDatabase): List<User> =
         database
-            .rawQuery("SELECT id, email FROM [users]", emptyArray())
-            .toList {
+            .query(SqlCommand("SELECT id, email FROM [users]")) {
                 User(
-                    id = UUID.fromString(it.getString(0)),
-                    email = it.getString(1))
+                    id = UUID.fromString(it.getAsString("id")),
+                    email = it.getAsString("email"))
             }
 
-    fun executeEventInSql(event: Events) =
+    fun eventToSql(event: Events): List<String> =
         when (event) {
             is Events.RegisterUser -> listOf(
                 "CREATE TABLE IF NOT EXISTS [users] (id TEXT, email TEXT)",
@@ -41,44 +40,51 @@ sealed class Events {
 }
 
 class User(val id: UUID, val email: String)
+data class SqlCommand(val sql: String, val args: List<String> = emptyList())
 
-class EventSourcing<Events> {
+class EventSourcing<E> {
 
-    private val serializer = Serializer<Events>()
+    private val serializer = Serializer<E>()
 
-    fun addEvent(x: Events, database: SQLiteDatabase, executeEventInSql: (Events) -> List<String>) {
-        database.execSQL("INSERT INTO events VALUES (?)", arrayOf(serializer.toString(x)))
-        executeEventInSql(x, database, executeEventInSql)
-    }
-
-    private fun executeEventInSql(event: Events, database: SQLiteDatabase, executeEventInSql: (Events) -> List<String>) {
-        executeEventInSql(event)
-            .forEach { database.execSQL(it, emptyArray()) }
-    }
-
-    fun resetTables(database: SQLiteDatabase, executeEventInSql: (Events) -> List<String>) {
-        database
-            .queryList("SELECT NAME FROM sqlite_master WHERE type IN ('table') AND name <> 'events'") { it.getString(0) }
-            .forEach { name -> database.execSQL("DROP TABLE $name") }
-        database
-            .rawQuery("SELECT data FROM events ORDER BY rowid", emptyArray())
-            .use {
-                it.asSequence { it.getString(0) }
-                    .map(serializer::fromString)
-                    .flatMap { event -> executeEventInSql(event).asSequence() }
-                    .forEach(database::execSQL)
+    fun addEvent(database: SQLiteDatabase, event: E, executeEventInSql: (E) -> List<String>) =
+        SqlCommand("INSERT INTO events VALUES (?)", listOf(serializer.toString(event)))
+            .let { listOf(it) }
+            .plus(executeEventInSql(event).map { SqlCommand(it) })
+            .let { commands ->
+                database.transaction {
+                    commands.forEach { database.execute(it) }
+                }
             }
-    }
 
-    private class Serializer<Events> {
+    fun reset(database: SQLiteDatabase, executeEventInSql: (E) -> List<String>) =
+        database.transaction {
+            database
+                .query(
+                    SqlCommand("SELECT name FROM sqlite_master WHERE type IN ('table') AND name <> 'events'"),
+                    ::toDropCommand)
+                .forEach { database.execute(it) }
+            database
+                .rawQuery("SELECT data FROM events ORDER BY rowid", emptyArray())
+                .use {
+                    it.asSequence { it.getString(0) }
+                        .map(serializer::fromString)
+                        .flatMap { event -> executeEventInSql(event).asSequence() }
+                        .forEach(database::execSQL)
+                }
+        }
 
-        class Wrapper<out Events>(val x: Events)
+    private fun toDropCommand(cursor: ContentValues): SqlCommand =
+        cursor.getAsString("name").let { SqlCommand("DROP TABLE $it") }
+
+    private class Serializer<E> {
+
+        class Wrapper<out E>(val x: E)
 
         private val mapper = ObjectMapper()
             .registerKotlinModule()
             .enableDefaultTyping(DefaultTyping.NON_FINAL, JsonTypeInfo.As.PROPERTY)
 
-        fun toString(x: Events): String = mapper.writeValueAsString(Wrapper(x))
-        fun fromString(x: String): Events = mapper.readValue<Wrapper<Events>>(x).x
+        fun toString(x: E): String = mapper.writeValueAsString(Wrapper(x))
+        fun fromString(x: String): E = mapper.readValue<Wrapper<E>>(x).x
     }
 }

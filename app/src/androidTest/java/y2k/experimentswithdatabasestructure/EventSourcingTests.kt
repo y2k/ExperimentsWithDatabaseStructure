@@ -24,21 +24,22 @@ class EventSourcingTests {
 
     @Test
     fun test() {
-        val database = resetDatabase()
-        database.execSQL("CREATE TABLE events (data TEXT)")
+        val db = resetDatabase()
+        db.execSQL("CREATE TABLE events (data TEXT)")
 
         val eventSourcing = EventSourcing<Events>()
 
         val id = UUID.randomUUID()
-        eventSourcing.addEvent(Events.RegisterUser(id, "alice@net.net"), database, Api::executeEventInSql)
-        eventSourcing.addEvent(Events.RegisterUser(UUID.randomUUID(), "bob@net.net"), database, Api::executeEventInSql)
-        Assert.assertEquals(2, Api.selectUsers(database).size)
 
-        eventSourcing.addEvent(Events.UnregisterUser(id), database, Api::executeEventInSql)
-        Assert.assertEquals(1, Api.selectUsers(database).size)
+        eventSourcing.addEvent(db, Events.RegisterUser(id, "alice@net.net"), Api::eventToSql)
+        eventSourcing.addEvent(db, Events.RegisterUser(UUID.randomUUID(), "bob@net.net"), Api::eventToSql)
+        Assert.assertEquals(2, Api.selectUsers(db).size)
 
-        eventSourcing.resetTables(database, Api::executeEventInSql)
-        Assert.assertEquals(1, Api.selectUsers(database).size)
+        eventSourcing.addEvent(db, Events.UnregisterUser(id), Api::eventToSql)
+        Assert.assertEquals(1, Api.selectUsers(db).size)
+
+        eventSourcing.reset(db, Api::eventToSql)
+        Assert.assertEquals(1, Api.selectUsers(db).size)
     }
 
     private fun resetDatabase(): SQLiteDatabase = InstrumentationRegistry
