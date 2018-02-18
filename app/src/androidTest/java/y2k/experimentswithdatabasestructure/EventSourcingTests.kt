@@ -6,6 +6,7 @@ import android.support.test.runner.AndroidJUnit4
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
+import y2k.experimentswithdatabasestructure.common.query
 import y2k.experimentswithdatabasestructure.eventsourcing.Api
 import y2k.experimentswithdatabasestructure.eventsourcing.EventSourcing
 import y2k.experimentswithdatabasestructure.eventsourcing.Events
@@ -33,13 +34,13 @@ class EventSourcingTests {
 
         eventSourcing.addEvent(db, Events.RegisterUser(id, "alice@net.net"), Api::eventToSql)
         eventSourcing.addEvent(db, Events.RegisterUser(UUID.randomUUID(), "bob@net.net"), Api::eventToSql)
-        Assert.assertEquals(2, Api.selectUsers(db).size)
+        Assert.assertEquals(2, Api.queryUsers().let(db::query).size)
 
         eventSourcing.addEvent(db, Events.UnregisterUser(id), Api::eventToSql)
-        Assert.assertEquals(1, Api.selectUsers(db).size)
+        Assert.assertEquals(1, Api.queryUsers().let(db::query).size)
 
         eventSourcing.reset(db, Api::eventToSql)
-        Assert.assertEquals(1, Api.selectUsers(db).size)
+        Assert.assertEquals(1, Api.queryUsers().let(db::query).size)
     }
 
     private fun resetDatabase(): SQLiteDatabase = InstrumentationRegistry

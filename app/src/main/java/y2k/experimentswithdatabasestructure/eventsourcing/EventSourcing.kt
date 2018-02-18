@@ -15,22 +15,22 @@ import java.util.*
 
 object Api {
 
-    fun selectUsers(database: SQLiteDatabase): List<User> =
-        database
-            .query(SqlCommand("SELECT id, email FROM [users]")) {
-                User(
-                    id = UUID.fromString(it.getAsString("id")),
-                    email = it.getAsString("email"))
-            }
+    fun queryUsers(): QueryCommand<User> =
+        QueryCommand(
+            SqlCommand("SELECT id, email FROM [users]"), {
+            User(
+                id = UUID.fromString(it.getAsString("id")),
+                email = it.getAsString("email"))
+        })
 
-    fun eventToSql(event: Events): List<String> =
+    fun eventToSql(event: Events): List<SqlCommand> =
         when (event) {
             is Events.RegisterUser -> listOf(
-                "CREATE TABLE IF NOT EXISTS [users] (id TEXT, email TEXT)",
-                "INSERT INTO [users] VALUES ('${event.id}', '${event.email}')")
+                SqlCommand("CREATE TABLE IF NOT EXISTS [users] (id TEXT, email TEXT)"),
+                SqlCommand("INSERT INTO [users] VALUES (?, ?)", listOf(event.id, event.email)))
             is Events.UnregisterUser -> listOf(
-                "CREATE TABLE IF NOT EXISTS [users] (id TEXT, email TEXT)",
-                "DELETE FROM [users] WHERE id = '${event.id}'")
+                SqlCommand("CREATE TABLE IF NOT EXISTS [users] (id TEXT, email TEXT)"),
+                SqlCommand("DELETE FROM [users] WHERE id = ?", listOf(event.id)))
         }
 }
 
@@ -40,28 +40,29 @@ sealed class Events {
 }
 
 class User(val id: UUID, val email: String)
-data class SqlCommand(val sql: String, val args: List<String> = emptyList())
+data class SqlCommand(val sql: String, val args: List<Any> = emptyList())
+data class QueryCommand<out T>(val cmd: SqlCommand, val f: (ContentValues) -> T)
 
 class EventSourcing<E> {
 
     private val serializer = Serializer<E>()
 
-    fun addEvent(database: SQLiteDatabase, event: E, executeEventInSql: (E) -> List<String>) =
+    fun addEvent(database: SQLiteDatabase, event: E, executeEventInSql: (E) -> List<SqlCommand>) =
         SqlCommand("INSERT INTO events VALUES (?)", listOf(serializer.toString(event)))
             .let { listOf(it) }
-            .plus(executeEventInSql(event).map { SqlCommand(it) })
+            .plus(executeEventInSql(event))
             .let { commands ->
                 database.transaction {
                     commands.forEach { database.execute(it) }
                 }
             }
 
-    fun reset(database: SQLiteDatabase, executeEventInSql: (E) -> List<String>) =
+    fun reset(database: SQLiteDatabase, executeEventInSql: (E) -> List<SqlCommand>) =
         database.transaction {
-            database
-                .query(
-                    SqlCommand("SELECT name FROM sqlite_master WHERE type IN ('table') AND name <> 'events'"),
-                    ::toDropCommand)
+            QueryCommand(
+                SqlCommand("SELECT name FROM sqlite_master WHERE type IN ('table') AND name <> 'events'"),
+                ::toDropCommand)
+                .let(database::query)
                 .forEach { database.execute(it) }
             database
                 .rawQuery("SELECT data FROM events ORDER BY rowid", emptyArray())
@@ -69,7 +70,7 @@ class EventSourcing<E> {
                     it.asSequence { it.getString(0) }
                         .map(serializer::fromString)
                         .flatMap { event -> executeEventInSql(event).asSequence() }
-                        .forEach(database::execSQL)
+                        .forEach(database::execute)
                 }
         }
 
