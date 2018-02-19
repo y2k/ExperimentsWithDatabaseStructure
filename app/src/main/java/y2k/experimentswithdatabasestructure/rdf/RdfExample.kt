@@ -1,20 +1,14 @@
 package y2k.experimentswithdatabasestructure.rdf
 
+import y2k.experimentswithdatabasestructure.common.Command
+import y2k.experimentswithdatabasestructure.common.ListCommand
+import y2k.experimentswithdatabasestructure.common.QueryCommand
+import y2k.experimentswithdatabasestructure.common.SqlCommand
 import java.util.*
 
-@Suppress("unused")
 object RdfExample {
 
-    /*
-
-    word        :   String
-    translation :   String
-
-     */
-
-    sealed class Actions {
-        class AddWord(val word: String, val translation: String)
-    }
+    data class User(val id: UUID, val name: String, val email: String)
 
     enum class Keys {
         Word,
@@ -22,28 +16,22 @@ object RdfExample {
         Selected
     }
 
-    private fun add(id: UUID, key: Keys, value: String): Unit = TODO()
-    private fun remove(id: UUID, key: Keys): Unit = TODO()
+    fun registerUser(id: UUID, name: String, email: String): Command =
+        ListCommand(listOf(
+            SqlCommand("INSERT INTO [users] VALUES ('$id', ':name', '$name')"),
+            SqlCommand("INSERT INTO [users] VALUES ('$id', ':email', '$email')")))
 
-    class Word(val word: String, val translation: String)
-
-    fun addWord(word: String, translation: String): UUID {
-        val id = UUID.randomUUID()
-        add(id, Keys.Word, word)
-        add(id, Keys.Translation, translation)
-        return id
-    }
-
-    fun selectWord(id: UUID) = add(id, Keys.Selected, true.toString())
-    fun unselect(id: UUID) = remove(id, Keys.Selected)
-
-    fun querySelectedWord(): List<Word> = query("""
-            select r.id, r2.value, r3.value
-            from records r
-            join records r2 on r2.key = ":word" and r2.id = r.id
-            join records r3 on r3.key = ":translation" and r3.id = r.id
-            where r.key = ":selected"
-        """)
-
-    private fun <T> query(s: String): List<T> = TODO()
+    fun queryUsers(): QueryCommand<User> =
+        QueryCommand(
+            SqlCommand("""
+                SELECT DISTINCT r.id AS id, r2.value AS name, r3.value AS email
+                FROM [users] r
+                JOIN [users] r2 ON r2.key = ':name' AND r2.id = r.id
+                JOIN [users] r3 ON r3.key = ':email' AND r3.id = r.id
+                """), {
+            User(
+                it.getAsString("id").let { UUID.fromString(it) },
+                it.getAsString("name"),
+                it.getAsString("email"))
+        })
 }

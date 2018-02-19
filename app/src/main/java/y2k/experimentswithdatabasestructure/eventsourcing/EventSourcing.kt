@@ -7,10 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.ObjectMapper.DefaultTyping
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import y2k.experimentswithdatabasestructure.common.asSequence
-import y2k.experimentswithdatabasestructure.common.execute
-import y2k.experimentswithdatabasestructure.common.query
-import y2k.experimentswithdatabasestructure.common.transaction
+import y2k.experimentswithdatabasestructure.common.*
 import java.util.*
 
 object Api {
@@ -31,17 +28,29 @@ object Api {
             is Events.UnregisterUser -> listOf(
                 SqlCommand("CREATE TABLE IF NOT EXISTS [users] (id TEXT, email TEXT)"),
                 SqlCommand("DELETE FROM [users] WHERE id = ?", listOf(event.id)))
+            is Events.AddBook -> listOf(
+                SqlCommand("CREATE TABLE IF NOT EXISTS [books] (id TEXT, bookId TEXT, title TEXT)"),
+                SqlCommand("INSERT INTO [books] VALUES (?, ?, ?)", listOf(event.id, event.userId, event.title)))
+            is Events.EditTitle -> listOf(
+                SqlCommand("CREATE TABLE IF NOT EXISTS [books] (id TEXT, bookId TEXT, title TEXT)"),
+                SqlCommand("UPDATE [books] SET title = ? WHERE id = ?", listOf(event.title, event.id)))
         }
+
+    fun queryBooks(id: UUID?): QueryCommand<Book> =
+        QueryCommand(
+            SqlCommand("SELECT title FROM books"),
+            { Book(title = it.getAsString("title")) })
 }
 
 sealed class Events {
     class RegisterUser(val id: UUID, val email: String) : Events()
     class UnregisterUser(val id: UUID) : Events()
+    class AddBook(val userId: UUID, val id: UUID, val title: String) : Events()
+    class EditTitle(val id: UUID, val title: String) : Events()
 }
 
+class Book(val title: String)
 class User(val id: UUID, val email: String)
-data class SqlCommand(val sql: String, val args: List<Any> = emptyList())
-data class QueryCommand<out T>(val cmd: SqlCommand, val f: (ContentValues) -> T)
 
 class EventSourcing<E> {
 

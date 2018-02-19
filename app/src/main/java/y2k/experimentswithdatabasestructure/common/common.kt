@@ -4,9 +4,12 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
-import y2k.experimentswithdatabasestructure.eventsourcing.QueryCommand
-import y2k.experimentswithdatabasestructure.eventsourcing.SqlCommand
 import kotlin.coroutines.experimental.buildSequence
+
+sealed class Command
+data class SqlCommand(val sql: String, val args: List<Any> = emptyList()) : Command()
+class ListCommand(val items: List<Command>) : Command()
+data class QueryCommand<out T>(val cmd: SqlCommand, val f: (ContentValues) -> T)
 
 inline fun SQLiteDatabase.transaction(f: () -> Unit) {
     beginTransaction()
@@ -18,8 +21,10 @@ inline fun SQLiteDatabase.transaction(f: () -> Unit) {
     }
 }
 
-fun SQLiteDatabase.execute(command: SqlCommand) =
-    execSQL(command.sql, command.args.toTypedArray())
+fun SQLiteDatabase.execute(command: Command): Unit = when (command) {
+    is SqlCommand -> execSQL(command.sql, command.args.toTypedArray())
+    is ListCommand -> command.items.forEach { execute(it) }
+}
 
 fun <T> SQLiteDatabase.query(cmd: QueryCommand<T>): List<T> {
     val c = rawQuery(cmd.cmd.sql, cmd.cmd.args.map(Any::toString).toTypedArray())
